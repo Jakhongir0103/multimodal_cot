@@ -1,0 +1,8 @@
+/anole
+/Anole*
+/.idea/
+*__pycache__
+*.env
+*.DS_store
+*data/
+*output*
