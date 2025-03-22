@@ -1,8 +1,13 @@
-/anole
-/Anole*
 /.idea/
 *__pycache__
 *.env
 *.DS_store
 *data/
 *output*
+/LLM-PuzzleTest
+/Anole*
+/models
+/CoMM
+/Emu3-models
+*checkpoints
+*wandb
