@@ -348,12 +348,25 @@ LLAMA_START_DOCSTRING = r"""
             [`~PreTrainedModel.from_pretrained`] method to load the model weights.
 """
 
+class CustomGenerationMixin(GenerationMixin):
+    def generate(self, *args, **kwargs):
+        was_training = self.training if hasattr(self, 'training') else False
+        
+        if hasattr(self, 'eval'):
+            self.eval()
+        
+        outputs = super().generate(*args, **kwargs)
+        
+        if was_training and hasattr(self, 'train'):
+            self.train()
+            
+        return outputs
 
 @add_start_docstrings(
     "The bare LLaMA Model outputting raw hidden-states without any specific head on top.",
     LLAMA_START_DOCSTRING,
 )
-class LlamaPreTrainedModel(PreTrainedModel):
+class LlamaPreTrainedModel(PreTrainedModel, CustomGenerationMixin):
     config_class = LlamaConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
@@ -627,13 +640,18 @@ class LlamaModel(LlamaPreTrainedModel):
         )
 
 
-class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
+class LlamaForCausalLM(LlamaPreTrainedModel):
 
     def __init__(self, config):
         super().__init__(config)
         self.model = LlamaModel(config)
 
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        
+        # image tokens -- TODO: make it cleaner
+        self.apply_loss_on_text_only = True
+        self.image_token_start = 32000  # <img_00000>
+        self.image_token_end = 40193    # </img>
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -658,7 +676,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
 
     @add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
-    
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -723,11 +741,14 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
 
         loss = None
         if labels is not None:
+            # Mask out vision tokens
+            if self.apply_loss_on_text_only:
+                labels = torch.where(torch.logical_and(labels >= self.image_token_start, labels <= self.image_token_end), -100, labels)
             # Shift so that tokens < n predict n
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
             # Flatten the tokens
-            loss_fct = CrossEntropyLoss()
+            loss_fct = CrossEntropyLoss()   # default: ignore_index=-100
             shift_logits = shift_logits.view(-1, self.config.vocab_size)
             shift_labels = shift_labels.view(-1)
             # Enable model parallelism
@@ -778,6 +799,17 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
             "attention_mask": attention_mask,
         })
         return model_inputs
+
+    def generate(self, *args, **kwargs):
+        is_training = self.training
+        
+        self.eval()
+        output = super().generate(*args, **kwargs)
+
+        if is_training:
+            self.train()
+
+        return output
 
     @staticmethod
     def _reorder_cache(past_key_values, beam_idx):

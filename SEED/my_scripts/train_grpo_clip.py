@@ -24,7 +24,7 @@ sys.path.append("/lid/home/saydalie/multimodal_cot/SEED/")
 from models.seed_llama_tokenizer import SeedLlamaTokenizer
 from models.model_tools import get_pretrained_llama_causal_model
 
-from rewards import image_text_alignment_reward, image_count_reward, format_reward, accuracy_reward
+from rewards import image_clip, image_count_reward, format_reward, accuracy_reward
 
 user_token = "USER"
 assistant_token = "ASSISTANT"
@@ -34,11 +34,12 @@ MODEL_NAME_OR_PATH = "/lid/home/saydalie/multimodal_cot/SEED/checkpoints/seed-ll
 DEEPSPEED_CONFIG = "/lid/home/saydalie/multimodal_cot/SEED/MultiModalLLM/configs/deepspeed/stage2_bf16.json"
 OUTPUT_DIR = "/lid/home/saydalie/multimodal_cot/models/SEED_trained"
 
-def load_tokenizer():
+def load_tokenizer(device):
     tokenizer = SeedLlamaTokenizer.from_pretrained(
         pretrained_model_name_or_path=MODEL_NAME_OR_PATH,
         fp16=True,
         padding_side='left',
+        device=device,
         load_diffusion=False
     )
 
@@ -83,12 +84,24 @@ def load_dataset(bos_token):
                 'answer': answer
             })
 
-
     train_dataset = Dataset.from_list(train_dataset)
     return train_dataset
 
+def get_device_name() -> str:
+    """
+    Returns the name of the device where this module is running on.
+    """
+    if torch.cuda.is_available():
+        if torch.distributed.is_initialized():
+            local_rank = torch.distributed.get_rank()
+        else:
+            local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        return f"cuda:{local_rank}"
+    return "cpu"
+    
 def train(args):
-    tokenizer = load_tokenizer()
+    device = get_device_name()
+    tokenizer = load_tokenizer(device)
     train_dataset = load_dataset(tokenizer.bos_token)
     # train_dataset = train_dataset.map(lambda sample: {'scene_ids': tokenizer.encode(sample['scene'])})
 
@@ -155,7 +168,7 @@ def train(args):
         max_prompt_length=256,
         beta=0.04,
         # Grpo specific
-        reward_weights=[1.0, 6.0, 6.0],
+        reward_weights=[1.0, 1.0, 6.0, 6.0],
         # Parameters related to reporting and saving
         save_strategy="steps",
         save_steps=0.05,
@@ -172,7 +185,7 @@ def train(args):
     trainer = GRPOTrainerCustom(
         model=model,
         processing_class=tokenizer,
-        reward_funcs=[image_count_reward, format_reward, accuracy_reward],
+        reward_funcs=[image_clip, image_count_reward, format_reward, accuracy_reward],
         args=training_args,
         train_dataset=train_dataset,
         loss_type=args.loss_type,

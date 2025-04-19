@@ -12,7 +12,7 @@ import argparse
 
 import torch
 
-from datasets import Dataset
+from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
 
 from trl import GRPOConfig, GRPOTrainer
@@ -29,7 +29,6 @@ from rewards import image_text_alignment_reward, image_count_reward, format_rewa
 user_token = "USER"
 assistant_token = "ASSISTANT"
 
-DATA_PATH = "/lid/home/saydalie/multimodal_cot/SEED/data/ReSQ/train_resq.json"
 MODEL_NAME_OR_PATH = "/lid/home/saydalie/multimodal_cot/SEED/checkpoints/seed-llama-8b-sft-comm/"
 DEEPSPEED_CONFIG = "/lid/home/saydalie/multimodal_cot/SEED/MultiModalLLM/configs/deepspeed/stage2_bf16.json"
 OUTPUT_DIR = "/lid/home/saydalie/multimodal_cot/models/SEED_trained"
@@ -47,50 +46,39 @@ def load_tokenizer():
 
     return tokenizer
 
-PROMPT = """{bos}{user_token}: I now describe a scene and ask a question about it. First, generate an image that helps visualize the scene described. Then, think about the reasoning process in the mind and then provide with the final answer. The final answer is either one of {candidate_answers}. The image and reasoning process are enclosed within <think> </think> tags, while the final answer is enclosed within <answer> </answer> tags, i.e., <think> image and the textual reasoning process here </think> <answer> the final answer here </answer>.
-{question}
+PROMPT_IMG = """{bos}{user_token}: I describe you my goal, and give you 2 solutions to achieve it. Generate images to visualize the 2 described solutions, and reason over them with text to figure out which solution achieves the goal. Then, provide with the final answer as 0 or 1, referring to solution 1 or solution 2 respectively. So, the final answer is either "0" or "1". The image and reasoning process are enclosed within <think> </think> tags, while the final answer is enclosed within <answer> </answer> tags, i.e., <think> image and the textual reasoning process here </think> <answer> the final answer here </answer>.
+Goal: {goal}
+Solution 1: {sol1}
+Solution 2: {sol2}
 {assistant_token}:"""
 
-# PROMPT = """{bos}{user_token}: I now describe a scene and ask a question about it. First, think about the reasoning process in the mind and then provide with the final answer. The final answer is either one of {candidate_answers}. The reasoning process and the final answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think> <answer> the final answer here </answer>.
-# {question}
-# {assistant_token}:"""
+PROMPT_TXT = """{bos}{user_token}: I describe you my goal, and give you 2 solutions to achieve it. Reason over the 2 offered solutions to figure out which one achieves the goal. Then, provide with the final answer as 0 or 1, referring to solution 1 or solution 2 respectively. So, the final answer is either "0" or "1". The reasoning process and the final answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think> <answer> the final answer here </answer>.
+Goal: {goal}
+Solution 1: {sol1}
+Solution 2: {sol2}
+{assistant_token}:"""
 
-def load_dataset(bos_token):
-    with open(DATA_PATH, "r") as file:
-        data = json.load(file)['data']
-        
-    train_dataset = []
+def load_train_dataset(bos_token, text_only_reasoning=False):
+    data = load_dataset('ybisk/piqa', split='train', trust_remote_code=True)    # {"goal": goal, "sol1": sol1, "sol2": sol2, "label": lab}
+    data = data.select(range(1000))
 
-    for d in data:
-        story = d['story']
-        questions = d['questions']
-        
-        for q in questions:
-            question = q['question']
-            answer = q['answer'][0]
-            candidate_answers = q['candidate_answers']
-            num_1st_context_sentences = q['num_1st_context_sentences']
+    print(data)
+    print(data[0])
 
-            scene = ' '.join(story[:num_1st_context_sentences])
-            train_dataset.append({
-                'prompt': PROMPT.format(
-                    bos=bos_token,
-                    user_token=user_token,
-                    assistant_token=assistant_token,
-                    candidate_answers=candidate_answers,
-                    question=f"{scene} {question}"),
-                'scene': scene,
-                'answer': answer
-            })
+    # columns after map: ["prompt", "answer"]
+    if text_only_reasoning:
+        data = data.map(lambda sample: {'prompt': PROMPT_TXT.format(bos=bos_token, user_token=user_token, assistant_token=assistant_token, goal=sample['goal'], sol1=sample['sol1'], sol2=sample['sol2']), 'answer': str(sample['label'])}, remove_columns=["goal", "sol1", "sol2", "label"])
+    else:
+        data = data.map(lambda sample: {'prompt': PROMPT_IMG.format(bos=bos_token, user_token=user_token, assistant_token=assistant_token, goal=sample['goal'], sol1=sample['sol1'], sol2=sample['sol2']), 'answer': str(sample['label'])}, remove_columns=["goal", "sol1", "sol2", "label"])
 
+    print(data)
+    print(data[0])
 
-    train_dataset = Dataset.from_list(train_dataset)
-    return train_dataset
+    return data
 
 def train(args):
     tokenizer = load_tokenizer()
-    train_dataset = load_dataset(tokenizer.bos_token)
-    # train_dataset = train_dataset.map(lambda sample: {'scene_ids': tokenizer.encode(sample['scene'])})
+    train_dataset = load_train_dataset(tokenizer.bos_token, args.text_only_reasoning)
 
     model = get_pretrained_llama_causal_model(
         pretrained_model_name_or_path=MODEL_NAME_OR_PATH,
@@ -155,7 +143,7 @@ def train(args):
         max_prompt_length=256,
         beta=0.04,
         # Grpo specific
-        reward_weights=[1.0, 6.0, 6.0],
+        # reward_weights=[1.0, 1.0, 2.0, 2.0],
         # Parameters related to reporting and saving
         save_strategy="steps",
         save_steps=0.05,
@@ -172,7 +160,7 @@ def train(args):
     trainer = GRPOTrainerCustom(
         model=model,
         processing_class=tokenizer,
-        reward_funcs=[image_count_reward, format_reward, accuracy_reward],
+        reward_funcs=[format_reward, accuracy_reward],
         args=training_args,
         train_dataset=train_dataset,
         loss_type=args.loss_type,
@@ -194,6 +182,7 @@ if __name__ == "__main__":
     parser.add_argument('--loss_type', type=str, default="grpo")
     parser.add_argument('--scale_rewards', action="store_true")
     parser.add_argument('--apply_loss_on_text_only', action="store_true")
+    parser.add_argument('--text_only_reasoning', action="store_true")
     args = parser.parse_args()
 
     train(args)

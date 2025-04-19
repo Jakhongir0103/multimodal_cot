@@ -1,19 +1,14 @@
 from peft import (
-    LoraConfig,
     PeftModel,
     LoraModel,
     PeftModelForCausalLM,
     get_peft_model,
-    get_peft_model_state_dict,
-    prepare_model_for_int8_training,
-    set_peft_model_state_dict,
 )
 from peft.peft_model import PEFT_TYPE_TO_MODEL_MAPPING
-from peft.utils import _set_trainable, PromptLearningConfig
-from peft.utils import PeftConfig
+from peft.utils import _set_trainable
+from peft import PromptLearningConfig, PeftConfig
 
 import torch
-from transformers import LlamaForCausalLM
 from omegaconf import DictConfig
 import hydra
 

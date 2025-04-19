@@ -9,14 +9,14 @@ import os
 import json
 import pathlib
 import argparse
-
+import pandas as pd
 import torch
 
 from datasets import Dataset
 from peft import LoraConfig, get_peft_model
 
 from trl import GRPOConfig, GRPOTrainer
-from trainer.grpo_trainer import GRPOTrainerCustom
+from trainer.grpo_trainer import GRPOTrainerCustom  # TODO: modify ADDITIONAL_TOKENS in trainer
 
 import sys
 sys.path.append("/lid/home/saydalie/multimodal_cot/SEED/")
@@ -29,7 +29,7 @@ from rewards import image_text_alignment_reward, image_count_reward, format_rewa
 user_token = "USER"
 assistant_token = "ASSISTANT"
 
-DATA_PATH = "/lid/home/saydalie/multimodal_cot/SEED/data/ReSQ/train_resq.json"
+DATA_PATH = "/lid/home/saydalie/multimodal_cot/SEED/data/ReSQ/train_resq_with_image_path.csv"
 MODEL_NAME_OR_PATH = "/lid/home/saydalie/multimodal_cot/SEED/checkpoints/seed-llama-8b-sft-comm/"
 DEEPSPEED_CONFIG = "/lid/home/saydalie/multimodal_cot/SEED/MultiModalLLM/configs/deepspeed/stage2_bf16.json"
 OUTPUT_DIR = "/lid/home/saydalie/multimodal_cot/models/SEED_trained"
@@ -47,42 +47,40 @@ def load_tokenizer():
 
     return tokenizer
 
-PROMPT = """{bos}{user_token}: I now describe a scene and ask a question about it. First, generate an image that helps visualize the scene described. Then, think about the reasoning process in the mind and then provide with the final answer. The final answer is either one of {candidate_answers}. The image and reasoning process are enclosed within <think> </think> tags, while the final answer is enclosed within <answer> </answer> tags, i.e., <think> image and the textual reasoning process here </think> <answer> the final answer here </answer>.
+PROMPT = """{bos}{user_token}: I now describe a scene and ask a question about it. First, generate an image that helps visualize the scene described. Then, use the image to think about the reasoning process to answer the question and then provide with the final answer. The final answer is either one of {candidate_answers}. The image and reasoning process are enclosed within <think> </think> tags, while the final answer is enclosed within <answer> </answer> tags, i.e., <think> image and the textual reasoning process here </think> <answer> the final answer here </answer>.
 {question}
-{assistant_token}:"""
+{assistant_token}: <think>{image_tokens}"""
+
+# PROMPT = """{bos}{user_token}: I now describe a scene and ask a question about it. First, generate an image that helps visualize the scene described. Then, think about the reasoning process in the mind and then provide with the final answer. The final answer is either one of {candidate_answers}. The image and reasoning process are enclosed within <think> </think> tags, while the final answer is enclosed within <answer> </answer> tags, i.e., <think> image and the textual reasoning process here </think> <answer> the final answer here </answer>.
+# {question}
+# {assistant_token}:"""
 
 # PROMPT = """{bos}{user_token}: I now describe a scene and ask a question about it. First, think about the reasoning process in the mind and then provide with the final answer. The final answer is either one of {candidate_answers}. The reasoning process and the final answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think> <answer> the final answer here </answer>.
 # {question}
 # {assistant_token}:"""
 
 def load_dataset(bos_token):
-    with open(DATA_PATH, "r") as file:
-        data = json.load(file)['data']
+    data = pd.read_csv(DATA_PATH)
+    data = data[data['image_tokens_best'].notna()].reset_index(drop=True)
         
     train_dataset = []
 
-    for d in data:
-        story = d['story']
-        questions = d['questions']
+    for _, row in data.iterrows():
+        answer = row['answer']
+        question = row['question']
+        candidate_answers = row['candidate_answers']
+        image_tokens = row['image_tokens_best']
         
-        for q in questions:
-            question = q['question']
-            answer = q['answer'][0]
-            candidate_answers = q['candidate_answers']
-            num_1st_context_sentences = q['num_1st_context_sentences']
-
-            scene = ' '.join(story[:num_1st_context_sentences])
-            train_dataset.append({
-                'prompt': PROMPT.format(
-                    bos=bos_token,
-                    user_token=user_token,
-                    assistant_token=assistant_token,
-                    candidate_answers=candidate_answers,
-                    question=f"{scene} {question}"),
-                'scene': scene,
-                'answer': answer
-            })
-
+        train_dataset.append({
+            'prompt': PROMPT.format(
+                bos=bos_token,
+                user_token=user_token,
+                assistant_token=assistant_token,
+                candidate_answers=candidate_answers,
+                question=question,
+                image_tokens=image_tokens),
+            'answer': answer
+        })
 
     train_dataset = Dataset.from_list(train_dataset)
     return train_dataset
@@ -90,7 +88,6 @@ def load_dataset(bos_token):
 def train(args):
     tokenizer = load_tokenizer()
     train_dataset = load_dataset(tokenizer.bos_token)
-    # train_dataset = train_dataset.map(lambda sample: {'scene_ids': tokenizer.encode(sample['scene'])})
 
     model = get_pretrained_llama_causal_model(
         pretrained_model_name_or_path=MODEL_NAME_OR_PATH,
@@ -155,7 +152,7 @@ def train(args):
         max_prompt_length=256,
         beta=0.04,
         # Grpo specific
-        reward_weights=[1.0, 6.0, 6.0],
+        # reward_weights=[1.0, 1.0, 2.0, 2.0],
         # Parameters related to reporting and saving
         save_strategy="steps",
         save_steps=0.05,
@@ -172,7 +169,7 @@ def train(args):
     trainer = GRPOTrainerCustom(
         model=model,
         processing_class=tokenizer,
-        reward_funcs=[image_count_reward, format_reward, accuracy_reward],
+        reward_funcs=[format_reward, accuracy_reward],
         args=training_args,
         train_dataset=train_dataset,
         loss_type=args.loss_type,
