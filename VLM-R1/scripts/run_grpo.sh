@@ -20,14 +20,15 @@ RUN_NAME="Qwen2.5-VL-7B-GRPO-lora"
 export DEBUG_MODE="true"
 export LOG_PATH="$BASE_LOG_PATH/debug_log_$RUN_NAME.txt"
 
-python -u grpo.py \
+python -u \
+    $REPO/src/open_r1/grpo.py \
     --output_dir $OUT_PATH/$RUN_NAME \
     --model_name_or_path Qwen/Qwen2.5-VL-7B-Instruct \
     --dataset_name $DATA_PATH \
     --max_prompt_length 1024 \
-    --num_generations 2 \
+    --num_generations 4 \
     --explanation_type bbox \
-    --per_device_train_batch_size 2 \
+    --per_device_train_batch_size 4 \
     --gradient_accumulation_steps 1 \
     --logging_steps 1 \
     --bf16 \
@@ -47,4 +48,5 @@ python -u grpo.py \
     --lora_alpha 32 \
     --lora_dropout 0.05 \
     --lora_task_type CAUSAL_LM \
-    --freeze_vision_modules true
+    --freeze_vision_modules true \
+    --deepspeed ${REPO}/src/open_r1/config/zero2.json \

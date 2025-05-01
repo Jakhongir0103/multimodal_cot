@@ -27,8 +27,8 @@ from dataclasses import dataclass, field
 
 import torch
 
-import transformers
 from transformers import set_seed, AutoProcessor, Qwen2_5_VLForConditionalGeneration
+from peft import get_peft_model
 
 from trl import SFTConfig, ModelConfig, ScriptArguments, SFTTrainer, TrlParser, get_peft_config
 
@@ -119,6 +119,15 @@ def main(script_args, training_args, model_args):
         data = json.load(f)
     data = list(data.values())
 
+    # Remove double questions: 3142 -> 2248
+    data = [d for d in data if not d['has_multiple_questions']]
+
+    # Filter out large images: 2248 -> 1885
+    data = [d for d in data if d['img_size'][0] * d['img_size'][1] <= 3686400]
+    
+    # TODO: used when we split the data into SFT and GRPO
+    random.shuffle(data)
+
     # Map the conversations
     data = [make_conversation(sample, script_args.dataset_name, script_args.explanation_type) for sample in data]
 
@@ -159,6 +168,12 @@ def main(script_args, training_args, model_args):
     if peft_config is not None:
         target_modules = find_all_linear_names(model, ['visual'])
         peft_config.target_modules = target_modules
+        # peft_config.target_modules = ['q_proj', 'v_proj', 'k_proj', 'o_proj', 'gate_proj', 'down_proj', 'up_proj']
+
+    print(peft_config)
+
+    model = get_peft_model(model, peft_config)
+    model.print_trainable_parameters()
     
     os.environ["WANDB_RUN_ID"] = training_args.run_name
     os.environ["WANDB_RESUME"] = "allow"

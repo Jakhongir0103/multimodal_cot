@@ -33,6 +33,21 @@ def get_possible_answers(sample: Dict[str, Any]) -> Tuple[str, str]:
         possible_answers_list = [f"({key}) {value}" for key, value in possible_answers.items()]
         return " ".join(possible_answers_list), ""
 
+def remove_bbox(text: str) -> str:
+    """
+    Removes list-like objects in square brackets (bbox) from the input string.
+    
+    Parameters:
+    - text (str): The input string containing list-like objects.
+    
+    Returns:
+    - str: The cleaned string with list-like objects removed.
+    """
+    # Regular expression pattern to match [number, number, ...]
+    pattern = r"\[\s*\d+(?:\.\d+)?(?:\s*,\s*\d+(?:\.\d+)?)*\s*\]"
+    cleaned_text = re.sub(pattern, "", text)
+    cleaned_text = re.sub(r'\s{2,}', ' ', cleaned_text)
+    return cleaned_text
 
 def get_prompt_components(sample: Dict[str, Any], explanation_type: str) -> Dict[str, str]:
     """
@@ -54,7 +69,8 @@ def get_prompt_components(sample: Dict[str, Any], explanation_type: str) -> Dict
     # Get explanation based on type
     if explanation_type == "original":
         think_instruction_prompt = "First think about the question in the mind using all relevant entities from the scene that are necessary to answer the question. Then, provide with the thinking process in <think> </think> tags and then output the final answer in <answer> </answer> tags."
-        explanation = sample['explanation']
+        # explanation = sample['explanation']
+        explanation = remove_bbox(sample['interleaved_explanation'])
     elif explanation_type == "bbox":
         # https://github.com/QwenLM/Qwen2.5-VL/blob/main/cookbooks/spatial_understanding.ipynb
         think_instruction_prompt = "First think about the question in the mind using all relevant entities from the scene that are necessary to answer the question, along with their bounding boxes coordinates in plain text format 'x1,y1,x2,y2 object'. Then, provide with the thinking process in <think> </think> tags and then output the final answer in <answer> </answer> tags."
@@ -78,12 +94,18 @@ def get_prompt_components(sample: Dict[str, Any], explanation_type: str) -> Dict
         q_text = (f"Question: {sample['questions'][0]}\nOptions: {possible_answers_question_1}.\n"
                   f"Question: {sample['questions'][1]}\nOptions: {possible_answers_question_2}.")
     else:
-        q_text = f"Question: {sample['questions']}\nOptions: {possible_answers_question_1}."
+        if isinstance(sample['questions'], str):
+            question = sample['questions']
+        elif isinstance(sample['questions'], list):
+            question = sample['questions'][0]
+        else:
+            raise Exception(f"Unknown question type: {type(sample['questions'])}")
+        q_text = f"Question: {question}\nOptions: {possible_answers_question_1}."
 
     return {
         'main_instruction_prompt': main_instruction_prompt,
         'q_text': q_text,
-        'answers_text': ", ".join(sample['true_answers']) + ".",
+        'answers_text': ", ".join(sample['true_answers']),
         'explanation': explanation,
         'think_instruction_prompt': think_instruction_prompt
     }

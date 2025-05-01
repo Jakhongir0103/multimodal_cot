@@ -85,14 +85,13 @@ class GRPOScriptArguments(ScriptArguments):
             "help": "Choose reward method: 'default', 'mcp', ..."
         },
     )
+    explanation_type: str = field(
+        default='bbox',metadata={"help": "Possible values: [original, bbox]"}
+    )
 
 @dataclass
 class GRPOModelConfig(ModelConfig):
     freeze_vision_modules: bool = True
-
-@dataclass
-class SFTScriptArguments(ScriptArguments):
-    explanation_type: str = field(default='bbox', metadata={"help": "Possible values: [original, bbox]"})
 
 # Format into conversation
 def make_conversation(sample, data_dir, explanation_type):
@@ -112,7 +111,6 @@ def make_conversation(sample, data_dir, explanation_type):
             ]
         }]
     }
-
 
 reward_funcs_registry = {
     "accuracy": accuracy_reward,
@@ -134,7 +132,6 @@ def main(script_args, training_args, model_args):
     # Load the VLM module
     vlm_module_cls = get_vlm_module(model_args.model_name_or_path)
     print("using vlm module:", vlm_module_cls.__name__)
-    question_prompt = vlm_module_cls.get_question_template(task_type="default")
 
     # Get reward functions
     reward_funcs = [reward_funcs_registry[func] for func in script_args.reward_funcs]
@@ -145,6 +142,13 @@ def main(script_args, training_args, model_args):
     with open(script_args.dataset_name + 'DrivingVQA/train.json', "r") as f:
         data = json.load(f)
     data = list(data.values())
+
+    # # Remove double questions: 3142 -> 2248
+    # data = [d for d in data if not d['has_multiple_questions']]
+
+    # # Filter out large images: 2248 -> 1885
+    # data = [d for d in data if d['img_size'][0] * d['img_size'][1] <= 3686400]
+    # print(len(data))
 
     # Map the conversations
     data = [make_conversation(sample, script_args.dataset_name, script_args.explanation_type) for sample in data]
