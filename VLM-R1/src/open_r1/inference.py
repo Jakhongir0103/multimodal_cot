@@ -1,29 +1,15 @@
 from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
-from qwen_vl_utils import process_vision_info
+from qwen_vl_utils import process_vision_info, smart_resize
 
-model_name_or_path = "/lid/home/saydalie/multimodal_cot/LLaMA-Factory/output/qwen2_5_vl-7b/sft/bbox-lr-5"
+model_name_or_path = "/lid/home/saydalie/multimodal_cot/VLM-R1/output/merged/Qwen2.5-VL-3B-GRPO-scaleup-acc_bbox_format/checkpoint-79768"
 
 # default: Load the model on the available device(s)
 model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
     model_name_or_path, torch_dtype="auto", device_map="auto"
 )
 
-# We recommend enabling flash_attention_2 for better acceleration and memory saving, especially in multi-image and video scenarios.
-# model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-#     "Qwen/Qwen2.5-VL-7B-Instruct",
-#     torch_dtype=torch.bfloat16,
-#     attn_implementation="flash_attention_2",
-#     device_map="auto",
-# )
-
 # default processor
-processor = AutoProcessor.from_pretrained(model_name_or_path, min_pixels=4*4, max_pixels=1920*1920)
-
-# The default range for the number of visual tokens per image in the model is 4-16384.
-# You can set min_pixels and max_pixels according to your needs, such as a token range of 256-1280, to balance performance and cost.
-# min_pixels = 256*28*28
-# max_pixels = 1280*28*28
-# processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct", min_pixels=min_pixels, max_pixels=max_pixels)
+processor = AutoProcessor.from_pretrained(model_name_or_path, min_pixels=56*56, max_pixels=1920*1920)
 
 messages = [
     {
@@ -31,9 +17,9 @@ messages = [
         "content": [
             {
                 "type": "image",
-                "image": "file:///lid/home/saydalie/multimodal_cot/VLM-R1/data/images/4149.jpg",
+                "image": "file:///lid/home/saydalie/multimodal_cot/VLM-R1/data/aokvqa/images/train2017/000000323820.jpg",
             },
-            {"type": "text", "text": "Select all correct answers to the following question from the available options. Question: Can I still follow the direction of the A6 highway?\nOptions: (A) Yes (B) No.\nFirst think about the question in the mind using all relevant entities from the scene that are necessary to answer the question. Then, provide with the thinking process in <think> </think> tags and then output the final answer in <answer> </answer> tags."},
+            {"type": "text", "text": "First think about the question in the mind using all relevant entities from the scene that are necessary to answer the question, along with their bounding boxes coordinates in plain text format 'x1,y1,x2,y2 object'. Then, provide with the thinking process in <think> </think> tags and then output the final answer in <answer> </answer> tags.\nQuestion: What food here comes from outside a farm?"},
         ],
     }
 ]

@@ -9,13 +9,15 @@ export WANDB_ENTITY="jakhongir-saydaliev-epfl"
 export WANDB_PROJECT="multimodal_cot"
 export HF_TOKEN="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"
 
+export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
+
 # train
 WORLD_SIZE=${WORLD_SIZE:-1}
 WORLD_SIZE=1
 RANK=${RANK:-0}
 MASTER_ADDR=${MASTER_ADDR:-127.0.0.1}
 MASTER_PORT=${MASTER_PORT:-23456}
-NGPUS=$(python -c "import torch; print(torch.cuda.device_count() - 1)") # keep 1 gpu for vllm
+NGPUS=$(python -c "import torch; print(torch.cuda.device_count())") # keep 1 gpu for vllm
 
 RUN_NAME="Qwen2.5-VL-7B-SFT-bbox"
 

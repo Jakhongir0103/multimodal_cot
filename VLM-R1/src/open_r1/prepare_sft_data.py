@@ -23,14 +23,18 @@ import random
 
 from transformers import set_seed
 
-from open_r1.utils.format_prompt import format_prompt
+from open_r1.utils.format_prompt import format_prompt, format_okvqa_prompt_train
 
 # Format into conversation
-def make_conversation(sample, data_dir, explanation_type, system_prompt):
+def make_conversation(sample, data_dir, explanation_type, system_prompt, dataset):
     # https://github.com/QwenLM/Qwen2.5-VL/blob/fe0d43a3b74d70b40d28062c8b44d05978a0ed98/qwen-vl-utils/src/qwen_vl_utils/vision_process.py#L112C1-L113C1
 
-    sample_formatted = format_prompt(sample, explanation_type=explanation_type)
-    image_path = os.path.join(data_dir, sample['img_filename'])
+    if dataset == "drivingvqa":
+        image_path = os.path.join(data_dir, sample['img_filename'])
+        sample_formatted = format_prompt(sample, explanation_type=explanation_type)
+    elif dataset == "aokvqa":
+        image_path = os.path.join(data_dir, f"aokvqa/images/train2017/{sample['img_filename']}")
+        sample_formatted = format_okvqa_prompt_train(sample, explanation_type=explanation_type)
 
     messages = [
         {
@@ -55,24 +59,38 @@ def main(args):
     set_seed(args.seed)
 
     # Load dataset
-    with open(args.data_dir + '/DrivingVQA/train.json', "r") as f:
-        data = list(json.load(f).values())
+    if args.dataset == 'drivingvqa':
+        with open(args.data_dir + '/DrivingVQA/train.json', "r") as f:
+            data = list(json.load(f).values())
 
-    # Remove double questions: 3142 -> 2248
-    data = [d for d in data if not d['has_multiple_questions']]
+        # Remove double questions: 3142 -> 2248
+        data = [d for d in data if not d['has_multiple_questions']]
 
-    # Filter out large images: 2248 -> 1885
-    data = [d for d in data if d['img_size'][0] * d['img_size'][1] <= 3686400]
-    print(len(data))
-    
+        # Filter out large images: 2248 -> 1885
+        data = [d for d in data if d['img_size'][0] * d['img_size'][1] <= 3686400]
+
+    elif args.dataset == 'aokvqa': 
+        with open(args.data_dir + '/aokvqa/train.json', "r") as f:
+            data = list(json.load(f).values())
+
     # TODO: used when we split the data into SFT and GRPO
     random.shuffle(data)
 
+    # driving vqa -- Keep 1/2
+    # data = data[:1000] # for SFT
+    # data = data[1000:] # for GRPO
+
+    # aokvqa
+    # data = data[:3000] # for SFT
+    # data = data[3000:] # for GRPO
+
+    print(data[0])
+
     # Map the conversations
-    data = [make_conversation(sample, args.data_dir, args.explanation_type, args.system_prompt) for sample in data]
+    data = [make_conversation(sample, args.data_dir, args.explanation_type, args.system_prompt, args.dataset) for sample in data]
 
     # Save
-    with open(args.data_dir + f"/DrivingVQA/sft/{args.output_name}.json", "w") as f:
+    with open(args.data_dir + f"/aokvqa/sft/{args.output_name}.json", "w+") as f:
         json.dump(data, f, indent=4)
 
     print(data[0])
@@ -83,6 +101,7 @@ if __name__ == "__main__":
     parser.add_argument("--explanation_type", type=str, required=True, help="bbox | original")
     parser.add_argument("--output_name", type=str, required=True)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--dataset", type=str, required=True, help="drivingvqa | aokvqa")
     parser.add_argument("--system_prompt", action="store_true")
     args = parser.parse_args()
 

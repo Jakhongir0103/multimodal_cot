@@ -24,7 +24,6 @@
 
 import os
 import json
-import random
 import pathlib
 from typing import Optional
 from dataclasses import dataclass, field
@@ -34,8 +33,8 @@ from transformers import set_seed
 
 from open_r1.trainer import VLMGRPOTrainer, GRPOConfig
 from open_r1.vlm_modules import Qwen2VLModule, InvernVLModule
-from open_r1.rewards import accuracy_reward, format_reward, bbox_reward
-from open_r1.utils.format_prompt import format_prompt
+from open_r1.rewards.rewards_scaleup import accuracy_reward, format_reward, bbox_reward
+from open_r1.utils.format_prompt_scaleup import format_prompt
 
 from trl import ModelConfig, ScriptArguments, TrlParser, get_peft_config
 
@@ -98,15 +97,27 @@ class GRPOModelConfig(ModelConfig):
     freeze_vision_modules: bool = True
 
 # Format into conversation
-def make_conversation(sample, data_dir, explanation_type):
+def make_conversation(sample, max_pixels, min_pixels):
+    """
+    {'question': 'what is the contact person name mentioned in letter?',
+    'answer': 'P. Carter',
+    'possible_answers': ['P. Carter', 'p. carter'],
+    'image': 'xnbl0037_1.png',
+    'width': 1695,
+    'height': 2025,
+    'bboxs': [[429, 511, 666, 578], [429, 511, 666, 578]],
+    'dataset': 'docvqa',
+    'split': 'train'
+    'image_path': <image_path>}
+    """
     # https://github.com/QwenLM/Qwen2.5-VL/blob/fe0d43a3b74d70b40d28062c8b44d05978a0ed98/qwen-vl-utils/src/qwen_vl_utils/vision_process.py#L112C1-L113C1
 
-    sample_formatted = format_prompt(sample, explanation_type=explanation_type)
-    image_path = os.path.join(data_dir, sample['img_filename'])
+    sample_formatted = format_prompt(sample=sample, max_pixels=max_pixels, min_pixels=min_pixels)
 
     return {
-        'image_path': image_path,
-        'solution': f"{sample_formatted['response']}",
+        'image_path': sample['image_path'],
+        'bboxes': sample_formatted['bboxes'],
+        'possible_answers': sample_formatted['possible_answers'],
         'prompt': [{
             'role': 'user',
             'content': [
@@ -130,6 +141,44 @@ def get_vlm_module(model_name_or_path):
     else:
         raise ValueError(f"Unsupported model: {model_name_or_path}")
 
+def load_dataset(data_dir:str = '/lid/home/saydalie/multimodal_cot/VLM-R1/data/scaleup'):
+
+    image_paths = {
+        'coco': "", # images/coco/train2017
+        'flickr30k': "", # images/flickr30k/flickr30k-images
+        'gqa': 'images/gqa/images', 
+        'ocr_vqa': "", # images/ocr_vqa/images
+        'textvqa': "images/textvqa/train_images", 
+        'v7w': "images/v7w/images", 
+        'vg': "", # images/vg/VG_100K 
+        'cub': "images/cot/cub/CUB_200_2011", 
+        'docvqa': "images/cot/docvqa", 
+        'dude': "images/cot/dude/DUDE_train-val-test_binaries/images/train", 
+        'infographicsvqa': "images/cot/infographicsvqa", 
+        'sroie': "images/cot/sroie/0325updated.task1train(626p)", 
+        'vsr': "images/cot/vsr/images",
+        'textcap': "images/textcap/train_images",
+        'openimages': ""
+    }    
+    
+    data_all = []
+
+    for file_name in os.listdir(f"{data_dir}/data"):
+        if file_name.endswith('.jsonl'):
+            file_paht = os.path.join(f"{data_dir}/data", file_name)
+            with open(file_paht, 'r', encoding='utf-8') as f:
+                data_all.extend([json.loads(line) for line in f])
+
+    # keep those with valid image path
+    data_valid = []
+    for data in data_all:
+        image_path = f"{data_dir}/{image_paths[data['dataset']]}/{data['image']}"
+        if data['dataset'] not in ['openimages', 'flickr30k'] and os.path.exists(image_path):
+            data['image_path'] = image_path
+            data_valid.append(data)
+
+    return data_valid
+
 def main(script_args, training_args, model_args):
     # Set seed for reproducibility
     set_seed(training_args.seed)
@@ -143,26 +192,13 @@ def main(script_args, training_args, model_args):
     print("reward_funcs:", reward_funcs)
 
     # Load the dataset
-    # `dataset_name`: dataset path to `.json` file
-    with open(script_args.dataset_name + 'DrivingVQA/train.json', "r") as f:
-        data = list(json.load(f).values())
-
-    # Remove double questions: 3142 -> 2248
-    data = [d for d in data if not d['has_multiple_questions']]
-
-    # Filter out large images: 2248 -> 1885
-    data = [d for d in data if d['img_size'][0] * d['img_size'][1] <= 3686400]
-
-    # TODO: used when we split the data into SFT and GRPO
-    random.shuffle(data)
-
-    # Keep 1/2
-    # data = data[:1000] # for SFT
-    data = data[1000:] # for GRPO
-
+    # `dataset_name`: path to `scaleup` dir
+    data = load_dataset(script_args.dataset_name)
+    
     # Map the conversations
-    data = [make_conversation(sample, script_args.dataset_name, script_args.explanation_type) for sample in data]
-
+    data = [make_conversation(sample, script_args.max_pixels, script_args.min_pixels) for sample in data]
+    print(f'Data Size: {len(data)}')
+    print('Sample:')
     print(data[0])
 
     os.environ["WANDB_RUN_ID"] = training_args.run_name

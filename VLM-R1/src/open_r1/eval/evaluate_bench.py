@@ -13,9 +13,11 @@ import torch
 from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
 from qwen_vl_utils import process_vision_info
 
-from open_r1.utils.format_prompt import format_prompt, format_okvqa_prompt
+from open_r1.eval.format_prompt_eval import format_prompt
+import random
+random.seed(42)
 
-def load_model_and_processor(model_path: str="/lid/home/saydalie/multimodal_cot/LLaMA-Factory/output/qwen2_5_vl-7b/sft/bbox"):
+def load_model_and_processor(model_path: str="/lid/home/saydalie/multimodal_cot/LLaMA-Factory/output/qwen2_5_vl-3b/sft/aokvqa-bbox-full-open-ended/epoch_1"):
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
         model_path,
         torch_dtype=torch.bfloat16,
@@ -25,33 +27,19 @@ def load_model_and_processor(model_path: str="/lid/home/saydalie/multimodal_cot/
     # default processor
     processor = AutoProcessor.from_pretrained(
         model_path,
-        min_pixels=4*4,
+        min_pixels=56*56,
         max_pixels=1920*1920
     )
 
     return model, processor
 
-def make_conversation(sample, data_dir, explanation_type, dataset, system_prompt=False):
+def make_conversation(sample, answers, image_folder):
     # https://github.com/QwenLM/Qwen2.5-VL/blob/fe0d43a3b74d70b40d28062c8b44d05978a0ed98/qwen-vl-utils/src/qwen_vl_utils/vision_process.py#L112C1-L113C1
 
-    if dataset == 'drivingvqa':
-        sample_formatted = format_prompt(sample, explanation_type=explanation_type)
-        image_path = os.path.join(data_dir, sample['img_filename'])
-    elif dataset == 'aokvqa':
-        sample_formatted = format_okvqa_prompt(sample, explanation_type=explanation_type)
-        image_path = os.path.join(data_dir, f"aokvqa/images/val2017/{sample['image_id']:012}.jpg")
+    sample_formatted = format_prompt(sample, answers)
+    image_path = os.path.join(image_folder, sample['image'])
 
-    if system_prompt:
-        messages = [
-            {
-                "role": "system",
-                "content": "As an AI assistant, you specialize in accurate image object detection, delivering coordinates in plain text format 'x1,y1,x2,y2 object'."
-            }
-        ]
-    else:
-        messages = []
-
-    messages.append(
+    messages = [
         {
             "role": "user",
             "content": [
@@ -59,9 +47,9 @@ def make_conversation(sample, data_dir, explanation_type, dataset, system_prompt
                 {"type": "text", "text": sample_formatted['prompt']},
             ],
         }
-    )
+    ]
 
-    return messages, sample_formatted['response']
+    return messages, sample_formatted['answer']
 
 def generate_responses(data, model, processor):
     responses = []
@@ -80,8 +68,8 @@ def generate_responses(data, model, processor):
             )
             inputs = inputs.to(model.device)
 
-            # Inference: Generation of the output
-            generated_ids = model.generate(**inputs, max_new_tokens=512)
+            # Inference: Greedy Decoding
+            generated_ids = model.generate(**inputs, max_new_tokens=512, do_sample=False)
             generated_ids_trimmed = [
                 out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
             ]
@@ -103,25 +91,18 @@ def extract_answer(text: str) -> List[str]:
     # Extract the final answer within <answer> </answer> tags
     match = re.search(r"<answer>(.*?)</answer>", text, re.DOTALL)
     if match:
-        # Extract capital letters A-D or numbers in parentheses, remove duplicates, and sort
-        results = sorted(set(re.findall(r"[A-D]|\(\d+\)", match.group(1))))
-        return results
+        # lowercase and strip the answer
+        return [match.group(1).lower().strip()]
     else:
         return []
-
-def compute_subset_accuracy(preds: Dict[str, List[str]], true_answers: Dict[str, List[str]]) -> float:
-    """
-    Computes the Exam Score (Subset Accuracy): the proportion of questions
-    where the model predicted all correct answers and no incorrect answers.
-    """
-    exact_matches = sum(set(pred) == set(true_answers[qid]) for qid, pred in preds.items())
-    return 100 * exact_matches / len(preds) if preds else 0
 
 def compute_precision_recall_f1(preds: Dict[str, List[str]], true_answers: Dict[str, List[str]]) -> Dict[str, float]:
     """
     Computes Precision, Recall, and F1-score for multi-label classification.
     """
     true_positives, false_positives, false_negatives = 0, 0, 0
+    exact_match_count = 0
+    total = len(true_answers)
 
     for qid, pred in preds.items():
         true_set = set(true_answers[qid])
@@ -131,11 +112,15 @@ def compute_precision_recall_f1(preds: Dict[str, List[str]], true_answers: Dict[
         false_positives += len(pred_set - true_set)      # Incorrectly predicted answers
         false_negatives += len(true_set - pred_set)      # Missed correct answers
 
+        if true_set == pred_set:
+            exact_match_count += 1
+
     precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0
     recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0
     f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+    accuracy = exact_match_count / total if total > 0 else 0
 
-    return {"precision": precision * 100, "recall": recall * 100, "f1_score": f1_score * 100}
+    return {"accuracy": accuracy * 100, "precision": precision * 100, "recall": recall * 100, "f1_score": f1_score * 100}
 
 def compute_scores(generated_responses):
     all_ground_truth = {}
@@ -143,34 +128,30 @@ def compute_scores(generated_responses):
     
     # Extract answer from each question-answer pair
     for rid, data in enumerate(generated_responses):
-        ground_truth = extract_answer(data['ground_truth_response'])
+        ground_truth = extract_answer(f"<answer>{data['ground_truth_response']}</answer>")
         prediction = extract_answer(data['generated_response'])
 
         all_ground_truth[rid] = ground_truth
         all_predictions[rid] = prediction
     
     # Compute scores
-    subset_accuracy = compute_subset_accuracy(all_predictions, all_ground_truth)
     precision_recall_f1 = compute_precision_recall_f1(all_predictions, all_ground_truth)
 
-    return {"exam_score": subset_accuracy, **precision_recall_f1}
+    return {**precision_recall_f1}
 
 def main(args):
     # Load dataset
-    if args.dataset == 'drivingvqa':
-        with open(args.input_data_dir + '/DrivingVQA/test.json', "r") as f:
-            data = list(json.load(f).values())
-        # Remove double questions: 789 -> 576
-        data = [d for d in data if not d['has_multiple_questions']]
-        # Filter out large images: 576 -> 474
-        data = [d for d in data if d['img_size'][0] * d['img_size'][1] <= 3686400]
+    with open(args.questions_file, "r") as f:
+        data = [json.loads(line) for line in f if line.strip()]
 
-    elif args.dataset == 'aokvqa':
-        with open(args.input_data_dir + '/aokvqa/val.json', "r") as f:
-            data = list(json.load(f))
+    data = random.sample(data, min(2000, len(data))) # select a subset of evaluation dataset
+
+    with open(args.answers_file, "r") as f:
+        answers = [json.loads(line) for line in f if line.strip()]
+        answers = {ans['question_id']: ans['text'] for ans in answers}
 
     # Map the conversations
-    data = [make_conversation(sample, args.input_data_dir, args.explanation_type, args.dataset, args.system_prompt) for sample in data]
+    data = [make_conversation(sample=sample, answers=answers, image_folder=args.image_folder) for sample in data]
     print(data[0])
 
     # Generate and evaluate
@@ -196,11 +177,10 @@ def main(args):
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, required=True)
-    parser.add_argument("--input_data_dir", type=str, required=True)
-    parser.add_argument("--explanation_type", type=str, required=True, help="bbox | original")
-    parser.add_argument("--output_data_dir", type=str, default="/lid/home/saydalie/multimodal_cot/results/qwen2_5_vl")
-    parser.add_argument("--system_prompt", action="store_true")
-    parser.add_argument("--dataset", type=str, required=True, help="drivingvqa | aokvqa")
+    parser.add_argument("--questions_file", type=str, required=True)
+    parser.add_argument("--answers_file", type=str, required=True)
+    parser.add_argument("--image_folder", type=str, required=True)
+    parser.add_argument("--output_data_dir", type=str, default="/lid/home/saydalie/multimodal_cot/results/qwen_3b_2_5_vl")
     args = parser.parse_args()
 
     main(args)

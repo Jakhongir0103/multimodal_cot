@@ -16,7 +16,7 @@ class Qwen2VLModule(VLMBaseModule):
     def get_model_class(self, model_id: str, model_init_kwargs: dict):
         if "Qwen2-VL" in model_id:
             model_cls = Qwen2VLForConditionalGeneration
-        elif "Qwen2.5-VL" in model_id:
+        elif "Qwen2.5-VL" in model_id or "qwen2_5_vl" in model_id.lower():
             model_cls = Qwen2_5_VLForConditionalGeneration
         else:
             raise ValueError(f"Unsupported model: {model_id}")

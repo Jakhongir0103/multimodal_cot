@@ -2,13 +2,6 @@ import os
 import re
 from datetime import datetime
 
-def xywh_to_xyxy(box):
-    """Convert COCO format [x_min, y_min, width, height] to [x_min, y_min, x_max, y_max]."""
-    x_min, y_min, width, height = box
-    x_max = x_min + width
-    y_max = y_min + height
-    return [x_min, y_min, x_max, y_max]
-
 def compute_iou(box1, box2):
     """
     Computes the Intersection over Union (IoU) of two bounding boxes.
@@ -62,9 +55,9 @@ def extract_bounding_boxes(text):
     
     results = {}
     for match in matches:
-        x, y, w, h, label = match
+        x1, y1, x2, y2, label = match
         try:
-            box = [int(x), int(y), int(w), int(h)]
+            box = [int(x1), int(y1), int(x2), int(y2)]
             results[label.strip().lower()] = box
         except ValueError:
             continue  # skip if conversion to int fails
@@ -74,17 +67,12 @@ def extract_bounding_boxes(text):
 def bbox_reward(completions, **kwargs):
     """Computes the IoU reward between generated bounding box and the ground truth bounding boxes."""
     contents = [completion[0]["content"] for completion in completions]
-    solutions = kwargs['solution']
+    bboxes_batch = kwargs['bboxes']
     rewards = []
-    for idx, (content, solution) in enumerate(zip(contents, solutions)):
+    for idx, (content, true_bboxes) in enumerate(zip(contents, bboxes_batch)):
         reward = 0.0
         predicted_bboxes = None
         try:
-            # Extract answer from solution if it has think tags
-            sol_match = re.search(r'<think>(.*?)</think>', solution, re.DOTALL)
-            true_think = sol_match.group(1).strip() if sol_match else solution.strip().lower()
-            true_bboxes = extract_bounding_boxes(true_think)
-            
             # Extract answer from content if it has think tags
             content_match = re.search(r'<think>(.*?)</think>', content, re.DOTALL)
             predicted_think = content_match.group(1).strip() if content_match else content.strip().lower()
@@ -92,13 +80,9 @@ def bbox_reward(completions, **kwargs):
 
             if predicted_bboxes:
                 for label, predicted_bbox in predicted_bboxes.items():
-                    if label in true_bboxes:
-                        # If the exact label is found from true, use its bbox
-                        iou = compute_iou(predicted_bbox, true_bboxes[label])
-                        reward += iou
-                    elif true_bboxes:
-                        # Otherwise, use the bbox from the true answer with the maximum iou value
-                        iou = max([compute_iou(predicted_bbox, true_bbox) for true_bbox in true_bboxes.values()])
+                    if true_bboxes:
+                        # use the bbox from the true answer with the maximum iou value
+                        iou = max([compute_iou(predicted_bbox, true_bbox) for true_bbox in true_bboxes])
                         reward += iou
                 reward = reward / len(predicted_bboxes)
         except Exception:
@@ -109,30 +93,28 @@ def bbox_reward(completions, **kwargs):
 
 def normalize_answer(answer):
     """Normalizes an answer by stripping whitespace, converting to lowercase, and removing punctuation."""
-    return re.sub(r'[^a-zA-Z0-9]', '', answer).lower()
+    # return re.sub(r'[^a-zA-Z0-9]', '', answer).lower()
+    return answer.lower().strip()
 
 def accuracy_reward(completions, **kwargs):
     """Reward function that checks if the completion is correct using either symbolic verification or exact string matching."""
     contents = [completion[0]["content"] for completion in completions]
-    solution = kwargs['solution']
+    possible_answers_batch = kwargs['possible_answers']
     rewards = []
-    for idx, (content, sol) in enumerate(zip(contents, solution)):
+    for idx, (content, possible_answers) in enumerate(zip(contents, possible_answers_batch)):
         reward = 0.0
-        ground_truth = None
         predicted_answer = None
         if reward == 0.0:
             try:
-                # Extract answer from solution if it has answer tags
-                sol_match = re.search(r'<answer>(.*?)</answer>', sol, re.DOTALL)
-                ground_truth = sol_match.group(1).strip() if sol_match else sol.strip().lower()
-                
                 # Extract answer from content if it has answer tags
                 content_match = re.search(r'<answer>(.*?)</answer>', content, re.DOTALL)
                 predicted_answer = content_match.group(1).strip() if content_match else content.strip().lower()
                 
                 # Compare the extracted answers
-                if predicted_answer == ground_truth:
-                    reward = 1.0
+                for ground_truth in possible_answers:
+                    if normalize_answer(predicted_answer) == normalize_answer(ground_truth):
+                        reward = 1.0
+                        break
             except Exception:
                 pass  # Keep reward as 0.0 if both methods fail
                 
@@ -145,7 +127,7 @@ def accuracy_reward(completions, **kwargs):
                 f.write(f"------------- {current_time} Accuracy reward: {reward} -------------\n")
                 f.write(f"Image Path: {kwargs['image_path'][idx]}\n")
                 f.write(f"Completion: {content}\n")
-                f.write(f"Solution: {sol}\n")
+                f.write(f"Possible Answers: {possible_answers}\n")
                 f.write(f"Golden: `{ground_truth}`\tPredicted: `{predicted_answer}`\n")
     return rewards
 
