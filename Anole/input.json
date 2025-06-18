@@ -1,0 +1,10 @@
+[
+    {
+        "type": "text",
+        "content": "1. Analyze what is in the image. 2. Then generate an image with the stop sign removed."
+    },
+    {
+        "type": "image",
+        "content": "assets/stop_sign.png"
+    }
+]
