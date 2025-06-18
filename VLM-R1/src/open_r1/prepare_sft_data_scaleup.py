@@ -54,7 +54,7 @@ def make_conversation(sample):
 
     return {'messages': messages, 'images': images}
 
-def load_dataset(data_dir:str = '/lid/home/saydalie/multimodal_cot/VLM-R1/data/scaleup'):
+def load_dataset(data_dir:str):
 
     image_paths = {
         'coco': "images/coco/train2017",

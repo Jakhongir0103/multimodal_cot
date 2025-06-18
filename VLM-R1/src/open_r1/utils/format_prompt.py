@@ -151,7 +151,7 @@ def format_prompt(sample: Dict[str, Any], explanation_type: str) -> Dict[str, st
 
 def format_okvqa_prompt_val(sample: Dict[str, Any], explanation_type: str) -> Dict[str, str]:
     # MCQ
-    main_instruction_prompt = "Select all correct answers to the following question from the available options. Choose at least one answer per question."
+    main_instruction_prompt = "Select all correct answers to the following question from the available options."
     possible_answers, answers_text = get_answer_format_okvqa(sample['choices'], sample['correct_choice_idx'])
     q_text = f"Question: {sample['question']}\nOptions: {possible_answers}."
 

@@ -34,7 +34,7 @@ from transformers import set_seed
 
 from open_r1.trainer import VLMGRPOTrainer, GRPOConfig
 from open_r1.vlm_modules import Qwen2VLModule, InvernVLModule
-from open_r1.rewards import accuracy_reward, format_reward, bbox_reward
+from open_r1.rewards.rewards import accuracy_reward, format_reward, bbox_reward
 from open_r1.utils.format_prompt import format_prompt
 
 from trl import ModelConfig, ScriptArguments, TrlParser, get_peft_config
@@ -47,9 +47,9 @@ class GRPOScriptArguments(ScriptArguments):
     """
     Script arguments for the GRPO training script.
     """
-    data_file_paths: str = field(
+    data_dir: str = field(
         default=None,
-        metadata={"help": "Paths to data files, separated by ':'"},
+        metadata={"help": "Path to data dir"},
     )
     image_folders: str = field(
         default=None,
@@ -98,11 +98,14 @@ class GRPOModelConfig(ModelConfig):
     freeze_vision_modules: bool = True
 
 # Format into conversation
-def make_conversation(sample, data_dir, explanation_type):
+def make_conversation(sample, data_dir, explanation_type, dataset_name):
     # https://github.com/QwenLM/Qwen2.5-VL/blob/fe0d43a3b74d70b40d28062c8b44d05978a0ed98/qwen-vl-utils/src/qwen_vl_utils/vision_process.py#L112C1-L113C1
 
+    if dataset_name == "drivingvqa":
+        image_path = os.path.join(data_dir, sample['img_filename'])
+    elif dataset_name == "aokvqa":
+        image_path = os.path.join(data_dir, f"aokvqa/images/train2017/{sample['img_filename']}")
     sample_formatted = format_prompt(sample, explanation_type=explanation_type)
-    image_path = os.path.join(data_dir, sample['img_filename'])
 
     return {
         'image_path': image_path,
@@ -143,26 +146,24 @@ def main(script_args, training_args, model_args):
     print("reward_funcs:", reward_funcs)
 
     # Load the dataset
-    # `dataset_name`: dataset path to `.json` file
-    with open(script_args.dataset_name + 'DrivingVQA/train.json', "r") as f:
-        data = list(json.load(f).values())
+    if script_args.dataset_name == 'drivingvqa':
+        with open(script_args.data_dir + '/DrivingVQA/train.json', "r") as f:
+            data = list(json.load(f).values())
 
-    # Remove double questions: 3142 -> 2248
-    data = [d for d in data if not d['has_multiple_questions']]
+        # Remove double questions: 3142 -> 2248
+        data = [d for d in data if not d['has_multiple_questions']]
 
-    # Filter out large images: 2248 -> 1885
-    data = [d for d in data if d['img_size'][0] * d['img_size'][1] <= 3686400]
+        # Filter out large images: 2248 -> 1885
+        data = [d for d in data if d['img_size'][0] * d['img_size'][1] <= 3686400]
 
-    # TODO: used when we split the data into SFT and GRPO
-    random.shuffle(data)
-
-    # Keep 1/2
-    # data = data[:1000] # for SFT
-    data = data[1000:] # for GRPO
+    elif script_args.dataset_name == 'aokvqa': 
+        with open(script_args.data_dir + '/aokvqa/train.json', "r") as f:
+            data = list(json.load(f).values())
 
     # Map the conversations
-    data = [make_conversation(sample, script_args.dataset_name, script_args.explanation_type) for sample in data]
+    data = [make_conversation(sample, script_args.data_dir, script_args.explanation_type, script_args.dataset_name) for sample in data]
 
+    print(f'Data size: {len(data)}')
     print(data[0])
 
     os.environ["WANDB_RUN_ID"] = training_args.run_name

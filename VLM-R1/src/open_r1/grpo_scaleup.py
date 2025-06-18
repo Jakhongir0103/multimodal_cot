@@ -141,7 +141,7 @@ def get_vlm_module(model_name_or_path):
     else:
         raise ValueError(f"Unsupported model: {model_name_or_path}")
 
-def load_dataset(data_dir:str = '/lid/home/saydalie/multimodal_cot/VLM-R1/data/scaleup'):
+def load_dataset(data_dir:str):
 
     image_paths = {
         'coco': "", # images/coco/train2017

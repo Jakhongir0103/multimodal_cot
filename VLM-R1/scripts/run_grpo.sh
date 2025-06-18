@@ -1,22 +1,7 @@
-# replace with your WandB details
-
-export DATA_PATH="/lid/home/saydalie/multimodal_cot/VLM-R1/data/scaleup"
-export OUT_PATH="/lid/home/saydalie/multimodal_cot/VLM-R1/output/"
-export REPO="/lid/home/saydalie/multimodal_cot/VLM-R1/"
-export BASE_LOG_PATH="$REPO/logs"
-
-export WANDB_API_KEY="625a24b8d51739a2c2ed657050c26b7c14b5fd9a"
-export WANDB_ENTITY="jakhongir-saydaliev-epfl"
-export WANDB_PROJECT="multimodal_cot"
-
-export HF_TOKEN="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"
-
-export PYTHONPATH="$PYTHONPATH:$REPO/src/"
-
 cd $REPO/src/open_r1/
 
-RUN_NAME="Qwen2.5-VL-3B-GRPO-scaleup-acc_bbox_format"
-MODEL_PATH="/lid/home/saydalie/multimodal_cot/LLaMA-Factory/output/qwen2_5_vl-3b/sft/aokvqa-bbox-full-open-ended/epoch_1"
+RUN_NAME="Qwen2.5-VL-7B-GRPO"
+BASE_MODEL_PATH="/lid/home/saydalie/multimodal_cot/LLaMA-Factory/output/qwen2_5_vl-7b/sft/aokvqa-bbox-full-seed_42"
 
 export DEBUG_MODE="true"
 export LOG_PATH="$BASE_LOG_PATH/debug_log_$RUN_NAME.txt"
@@ -36,10 +21,11 @@ torchrun \
     --node_rank=${RANK} \
     --master_addr=${MASTER_ADDR} \
     --master_port=${MASTER_PORT} \
-    $REPO/src/open_r1/grpo_scaleup.py \
+    $REPO/src/open_r1/grpo.py \
     --output_dir $OUT_PATH/$RUN_NAME \
-    --model_name_or_path $MODEL_PATH \
-    --dataset_name $DATA_PATH \
+    --model_name_or_path $BASE_MODEL_PATH \
+    --data_dir $DATA_PATH \
+    --dataset_name aokvqa \
     --num_generations 4 \
     --explanation_type bbox \
     --per_device_train_batch_size 1 \
@@ -52,8 +38,8 @@ torchrun \
     --gradient_checkpointing true \
     --num_train_epochs 1 \
     --run_name $RUN_NAME \
-    --save_steps 0.05 \
-    --save_total_limit 3 \
+    --save_steps 0.1 \
+    --save_total_limit 1 \
     --save_only_model false \
     --push_to_hub=false \
     --learning_rate 1e-5 \
