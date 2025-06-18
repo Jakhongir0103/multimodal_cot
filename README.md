@@ -5,7 +5,7 @@ This repo contains the implementation of a project on multimodal reasoning. The 
   <img src="assets/figure.jpeg" alt="Model Overview" width="500"/>
 </p>
 
-- [anole](anole/) - contains the implementation of *Multimodal-to-Multimodal Reasoning*
+- [Anole](Anole/) - contains the implementation of *Multimodal-to-Multimodal Reasoning*
 - [SEED](SEED/) - contains the implementation of *Text-to-Multimodal Reasoning*
 - [VLM-R1](VLM-R1/) - contains the implementation of *Multimodal-to-Text Reasoning*
 
