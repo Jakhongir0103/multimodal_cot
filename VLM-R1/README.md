@@ -1,3 +1,10 @@
+# Multimodal-to-Text Reasoning
+This project contains the implementation of Multimodal-to-Text reasoning paradigm of [this](../pdf/technical_report.pdf) project.
+
+<p align="center">
+  <img src="../assets/mm2text_figure.jpeg" alt="Model Overview" width="500"/>
+</p>
+
 ### Set-up
 ```bash
 # set the environment variables as in `.env_example`
